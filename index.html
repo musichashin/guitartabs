@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Tab Player</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    
+    <!-- Подключаем AlphaTab CSS и JS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/alphaTab.css">
+    <script src="https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/alphaTab.min.js"></script>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #alphaTab {
+            flex-grow: 1;
+            overflow-y: auto;
+            position: relative;
+            /* Важно для корректной работы выделения мышкой */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .controls {
+            flex-shrink: 0;
+            padding: 10px;
+            background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            border-top: 1px solid var(--tg-theme-hint-color, #ccc);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+        button, select {
+            padding: 8px 12px;
+            font-size: 14px;
+            border-radius: 8px;
+            border: none;
+            background-color: var(--tg-theme-button-color, #3390ec);
+            color: var(--tg-theme-button-text-color, #ffffff);
+            cursor: pointer;
+        }
+        select {
+            background-color: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            border: 1px solid var(--tg-theme-hint-color, #ccc);
+            max-width: 120px;
+        }
+        .tempo-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(0,0,0,0.05);
+            padding: 4px 8px;
+            border-radius: 8px;
+        }
+        input[type="range"] {
+            width: 80px;
+            cursor: pointer;
+        }
+        /* Стили AlphaTab */
+        .at-cursor-beat {
+            background: rgba(255, 242, 0, 0.5);
+            border-radius: 2px;
+        }
+        .at-selection {
+            background: rgba(64, 168, 255, 0.4) !important;
+            border: 1px solid rgba(64, 168, 255, 0.8) !important;
+        }
+        .active {
+            background-color: #ff9800 !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="alphaTab" data-tex="\title 'Demo' . :4 0.5 3.5 5.5 0.5 3.5 5.5 |"></div>
+
+    <div class="controls">
+        <!-- Файл -->
+        <button onclick="document.getElementById('fileInput').click()" title="Открыть файл">📂</button>
+        <input type="file" id="fileInput" accept=".gp,.gp3,.gp4,.gp5,.gpx" style="display:none">
+        
+        <!-- Темп -->
+        <div class="tempo-group">
+            <span id="tempoValue" style="font-size: 12px; min-width: 35px;">100%</span>
+            <input type="range" id="tempo" min="50" max="200" value="100">
+            <button id="resetTempo" style="padding: 4px 8px;" title="Сброс">↺</button>
+        </div>
+
+        <!-- Loop -->
+        <button id="loopButton" title="Зациклить">🔁</button>
+        
+        <!-- Дорожки -->
+        <select id="trackList" style="display:none"></select>
+
+        <!-- Плей -->
+        <button id="playPause" style="min-width: 50px;">▶</button>
+    </div>
+
+    <script>
+        // Инициализация Telegram
+        if (window.Telegram && window.Telegram.WebApp) {
+            window.Telegram.WebApp.ready();
+            window.Telegram.WebApp.expand();
+        }
+
+        // Инициализация AlphaTab
+        const wrapper = document.querySelector('#alphaTab');
+        const api = new alphaTab.AlphaTabApi(wrapper, {
+            core: {
+                fontDirectory: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/font/'
+            },
+            display: {
+                layoutMode: 'page',
+            },
+            player: {
+                enablePlayer: true,
+                enableCursor: true,
+                enableUserInteraction: true,
+                soundFont: 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@latest/dist/soundfont/sonivox.sf2',
+                scrollElement: wrapper,
+                scrollMode: 'off-screen'
+            }
+        });
+
+        // Элементы управления
+        const playButton = document.getElementById('playPause');
+        const loopButton = document.getElementById('loopButton');
+        const tempoSlider = document.getElementById('tempo');
+        const tempoValue = document.getElementById('tempoValue');
+        const resetTempo = document.getElementById('resetTempo');
+        const trackList = document.getElementById('trackList');
+        const fileInput = document.getElementById('fileInput');
+
+        // 1. Play / Pause
+        playButton.onclick = () => {
+            api.playPause();
+        };
+        api.playerStateChanged.on((args) => {
+            playButton.innerText = args.state === 1 ? '⏸' : '▶';
+        });
+
+        // 2. Список дорожек
+        api.scoreLoaded.on((score) => {
+            trackList.innerHTML = '';
+            score.tracks.forEach((track, i) => {
+                const option = document.createElement('option');
+                option.value = i;
+                option.innerText = track.name || 'Track ' + (i + 1);
+                trackList.appendChild(option);
+            });
+            // Показываем список только если дорожек больше одной
+            trackList.style.display = score.tracks.length > 1 ? 'inline-block' : 'none';
+        });
+        trackList.onchange = () => {
+            api.renderTracks([api.score.tracks[trackList.value]]);
+        };
+
+        // 3. Загрузка файла
+        fileInput.onchange = (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    api.load(new Uint8Array(e.target.result));
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        };
+
+        // 4. Темп
+        const updateTempo = () => {
+            const val = parseInt(tempoSlider.value, 10);
+            tempoValue.innerText = val + '%';
+            api.playbackSpeed = val / 100;
+        };
+        tempoSlider.addEventListener('input', updateTempo);
+        resetTempo.onclick = () => { tempoSlider.value = 100; updateTempo(); };
+
+        // 5. Клик по ноте (перемотка)
+        api.beatMouseDown.on((event) => {
+            api.tick = event.beat.start;
+        });
+
+        // 6. Loop (Зацикливание)
+        loopButton.onclick = () => {
+            api.isLooping = !api.isLooping;
+            loopButton.classList.toggle('active', api.isLooping);
+        };
+
+    </script>
+</body>
+</html>
